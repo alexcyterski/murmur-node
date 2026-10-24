@@ -60,3 +60,11 @@ Boards flashed with that build skip the setup page.
 
 Supported sensors: DHT22/AM2302, DHT11, AHT20(+BMP280), BMP280 and BME280. Nodes speak the
 [Murmur MQTT protocol](https://github.com/alexcyterski/murmur-core/blob/main/docs/protocol.md).
+
+## Development checks
+
+```bash
+pio run
+c++ -std=c++11 -Wall -Wextra -Werror tests/protocol.cpp -o /tmp/murmur-protocol-test
+/tmp/murmur-protocol-test
+```

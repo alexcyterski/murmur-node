@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "portal_html.h"
+#include "protocol.h"
 
 #ifndef MURMUR_FW_VERSION
 #define MURMUR_FW_VERSION "dev"
@@ -130,6 +131,7 @@ void handleSave() {
   next.sensor = sensorFromKey(server->arg("sensor"));
   next.name = server->arg("name");
   next.name.trim();
+  next.name = next.name.substring(0, murmur::namePrefixBytes(next.name.c_str()));
   if (next.name.isEmpty()) next.name = id;
   next.interval = constrain(server->arg("interval").toInt(), (long)kIntervalMin, (long)kIntervalMax);
   next.ssid = server->arg("ssid");
@@ -145,6 +147,7 @@ void handleSave() {
   if (next.mqttUser.isEmpty()) next.mqttPass = "";
   next.baseTopic = server->arg("base");
   next.baseTopic.trim();
+  while (next.baseTopic.startsWith("/")) next.baseTopic.remove(0, 1);
   while (next.baseTopic.endsWith("/")) next.baseTopic.remove(next.baseTopic.length() - 1);
   if (next.baseTopic.isEmpty()) next.baseTopic = "murmur";
   if (server->arg("ota").length()) next.otaPass = server->arg("ota");

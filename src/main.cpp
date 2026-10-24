@@ -17,6 +17,7 @@
 #include <esp_timer.h>
 
 #include "portal.h"
+#include "protocol.h"
 #include "sensors.h"
 #include "settings.h"
 #include "status_led.h"
@@ -147,7 +148,7 @@ void openPortalOrRestart() {
 // MQTT
 // ---------------------------------------------------------------------------
 void publishJson(const String &topic, JsonDocument &doc, bool retain) {
-  char buf[512];
+  char buf[1024];
   const size_t n = serializeJson(doc, buf, sizeof buf);
   mqtt.publish(topic.c_str(), reinterpret_cast<const uint8_t *>(buf), n, retain);
 }
@@ -206,7 +207,7 @@ void onMessage(char *topic, byte *payload, unsigned int len) {
     }
     if (doc["name"].is<const char *>()) {
       String name = doc["name"].as<const char *>();
-      name = name.substring(0, 32);
+      name = name.substring(0, murmur::namePrefixBytes(name.c_str()));
       if (name.length() && name != settings.name) {
         settings.name = name;
         changed = true;

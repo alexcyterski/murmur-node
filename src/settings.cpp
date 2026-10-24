@@ -1,4 +1,5 @@
 #include "settings.h"
+#include "protocol.h"
 
 #include <Preferences.h>
 
@@ -75,7 +76,11 @@ void Settings::load(const String &nodeId) {
   if (exists) p.end();
 
   if ((uint8_t)sensor >= kSensorTypeCount) sensor = SensorType::Auto;
+  name = name.substring(0, murmur::namePrefixBytes(name.c_str()));
   interval = constrain(interval, kIntervalMin, kIntervalMax);
+  baseTopic.trim();
+  while (baseTopic.startsWith("/")) baseTopic.remove(0, 1);
+  while (baseTopic.endsWith("/")) baseTopic.remove(baseTopic.length() - 1);
   if (baseTopic.isEmpty()) baseTopic = "murmur";
 
   // Credentials compiled in via murmur_secrets.h count as configured.

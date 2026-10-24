@@ -45,7 +45,7 @@ static const char kPortalForm[] PROGMEM = R"HTML(
 <select id="sensor" name="sensor">{{SENSORS}}</select>
 <div class="hint">DHT on GPIO{{PDATA}} · I2C on SDA GPIO{{PSDA}} / SCL GPIO{{PSCL}} (change under Advanced).</div>
 <label for="name">Node name</label>
-<input id="name" name="name" maxlength="32" value="{{NAME}}" placeholder="Living Room">
+<input id="name" name="name" maxlength="48" value="{{NAME}}" placeholder="Living Room">
 <label for="interval">Report every (seconds)</label>
 <input id="interval" name="interval" type="number" min="2" max="3600" value="{{INTERVAL}}">
 </div>
