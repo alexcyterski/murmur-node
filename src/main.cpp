@@ -2,9 +2,9 @@
 //
 // Topics (base defaults to "murmur"):
 //   <base>/<id>/state   out  {"t":21.4,"h":44.1,"p":1012.6,"rssi":-58,"up":3600,"heap":181234}
-//   <base>/<id>/status  out  "online" / "offline" (retained, last will)
+//   <base>/<id>/status  out  "online" / "sleeping" / "offline" (retained; will = offline)
 //   <base>/<id>/info    out  device metadata (retained)
-//   <base>/<id>/config  in   {"interval":30,"led":true,"name":"Bedroom"} (retained, from the server)
+//   <base>/<id>/config  in   {"interval":300,"led":true,"name":"Bedroom","battery":true} (retained)
 //   <base>/<id>/cmd     in   {"action":"identify"|"read"|"reboot"}
 
 #include <Arduino.h>
@@ -15,7 +15,10 @@
 #include <WiFi.h>
 #include <esp_mac.h>
 #include <esp_timer.h>
+#include <esp_sleep.h>
+#include <driver/gpio.h>
 
+#include "battery.h"
 #include "portal.h"
 #include "protocol.h"
 #include "sensors.h"
@@ -40,6 +43,7 @@ constexpr uint32_t kSensorRetry = 30000;
 Settings settings;
 SensorHub sensor;
 StatusLed led;
+BatteryCycle batteryCycle;
 WiFiClient net;
 PubSubClient mqtt(net);
 
@@ -56,6 +60,8 @@ uint32_t wifiLostAt = 0;
 uint32_t sensorRetryAt = 0;
 uint32_t rebootAt = 0;
 uint32_t buttonDownAt = 0;
+uint32_t sensorReadAt = 0;
+bool otaBusy = false;
 
 inline bool due(uint32_t at) { return (int32_t)(millis() - at) >= 0; }
 inline uint32_t uptimeSec() { return (uint32_t)(esp_timer_get_time() / 1000000ULL); }
@@ -68,8 +74,25 @@ String makeNodeId() {
   return buf;
 }
 
+void sleepNow(bool delivered) {
+  const uint32_t seconds = BatteryCycle::sleepSeconds(settings.interval, delivered);
+  Serial.printf("[battery] sleeping for %lus%s\n", (unsigned long)seconds, delivered ? "" : " (retry)");
+  if (mqtt.connected()) {
+    mqtt.publish(topicStatus.c_str(), delivered ? "sleeping" : "offline", true);
+    delay(100);  // allow the final status packet onto the wire before disconnect
+    mqtt.disconnect();  // graceful disconnect suppresses the offline last will
+  }
+  WiFi.mode(WIFI_OFF);
+  led.off();
+  gpio_hold_en((gpio_num_t)MURMUR_LED_PIN);
+  gpio_deep_sleep_hold_en();
+  Serial.flush();
+  esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
+  esp_deep_sleep_start();
+}
+
 // ---------------------------------------------------------------------------
-// Button: short press = report now, hold 5 s = factory reset
+// BOOT while awake: report now + battery maintenance window; hold 5 s = reset
 // ---------------------------------------------------------------------------
 void handleButton() {
   const bool down = digitalRead(MURMUR_BUTTON_PIN) == LOW;
@@ -89,6 +112,10 @@ void handleButton() {
     ESP.restart();
   } else if (!down && buttonDownAt) {
     if (now - buttonDownAt > 40) {  // debounced short press
+      if (settings.battery) {
+        batteryCycle.holdAwake(now);
+        Serial.println("[battery] maintenance window: 5 minutes");
+      }
       reportNow = true;
       led.identify(400);
     }
@@ -138,7 +165,9 @@ bool connectWifi() {
 void openPortalOrRestart() {
   Serial.println("[wifi] can't connect - opening setup portal");
   if (mqtt.connected()) mqtt.disconnect();
-  if (portal::run(settings, nodeId, led, kPortalIdleTimeout, true) != portal::Result::StaConnected) {
+  const auto result = portal::run(settings, nodeId, led, kPortalIdleTimeout, true);
+  if (result == portal::Result::Timeout && settings.battery) sleepNow(false);
+  if (result != portal::Result::StaConnected) {
     ESP.restart();
   }
   Serial.println("[wifi] reconnected, portal closed");
@@ -147,10 +176,11 @@ void openPortalOrRestart() {
 // ---------------------------------------------------------------------------
 // MQTT
 // ---------------------------------------------------------------------------
-void publishJson(const String &topic, JsonDocument &doc, bool retain) {
+bool publishJson(const String &topic, JsonDocument &doc, bool retain) {
   char buf[1024];
+  if (measureJson(doc) >= sizeof buf) return false;
   const size_t n = serializeJson(doc, buf, sizeof buf);
-  mqtt.publish(topic.c_str(), reinterpret_cast<const uint8_t *>(buf), n, retain);
+  return mqtt.publish(topic.c_str(), reinterpret_cast<const uint8_t *>(buf), n, retain);
 }
 
 void publishInfo() {
@@ -165,11 +195,11 @@ void publishInfo() {
   doc["ssid"] = WiFi.SSID();
   doc["interval"] = settings.interval;
   doc["led"] = settings.led;
-  publishJson(topicInfo, doc, true);
-  infoDirty = false;
+  doc["battery"] = settings.battery;
+  infoDirty = !publishJson(topicInfo, doc, true);
 }
 
-void publishState() {
+bool publishState() {
   Reading r;
   const bool ok = sensor.read(r);
   JsonDocument doc;
@@ -180,10 +210,11 @@ void publishState() {
   doc["up"] = uptimeSec();
   doc["heap"] = ESP.getFreeHeap();
   if (!ok || sensor.error()) doc["err"] = sensor.error() ? sensor.error() : "sensor not ready";
-  publishJson(topicState, doc, false);
-  led.blip();
+  const bool sent = publishJson(topicState, doc, false);
+  if (sent) led.blip();
   Serial.printf("[report] t=%.2f h=%.2f p=%.2f%s%s\n", r.t, r.h, r.p, sensor.error() ? " err=" : "",
-                sensor.error() ? sensor.error() : "");
+                 sensor.error() ? sensor.error() : "");
+  return sent;
 }
 
 void onMessage(char *topic, byte *payload, unsigned int len) {
@@ -205,6 +236,12 @@ void onMessage(char *topic, byte *payload, unsigned int len) {
       led.setEnabled(settings.led);
       changed = true;
     }
+    if (doc["battery"].is<bool>() && doc["battery"].as<bool>() != settings.battery) {
+      settings.battery = doc["battery"].as<bool>();
+      batteryCycle.begin(millis(), false);
+      batteryCycle.connected(millis());
+      changed = true;
+    }
     if (doc["name"].is<const char *>()) {
       String name = doc["name"].as<const char *>();
       name = name.substring(0, murmur::namePrefixBytes(name.c_str()));
@@ -216,13 +253,17 @@ void onMessage(char *topic, byte *payload, unsigned int len) {
     if (changed) {
       settings.save();
       infoDirty = true;
+      reportNow = true;
       Serial.printf("[config] interval=%lus led=%d name=\"%s\"\n", (unsigned long)settings.interval, settings.led,
                     settings.name.c_str());
     }
   } else if (topicCmd == topic) {
     const String action = doc["action"] | "";
     Serial.printf("[cmd] %s\n", action.c_str());
-    if (action == "identify") led.identify(10000);
+    if (action == "identify") {
+      led.identify(10000);
+      if (settings.battery) batteryCycle.holdAwake(millis());
+    }
     else if (action == "read") reportNow = true;
     else if (action == "reboot") rebootAt = millis() + 300;
   }
@@ -256,6 +297,7 @@ void mqttConnect() {
     mqtt.subscribe(topicCmd.c_str(), 0);
     infoDirty = true;
     reportNow = true;
+    batteryCycle.connected(millis());
   } else {
     Serial.printf("[mqtt] failed (state %d), retry in %lus\n", mqtt.state(), (unsigned long)mqttBackoff / 1000);
     mqttRetryAt = millis() + mqttBackoff;
@@ -267,6 +309,7 @@ void setupOta() {
   ArduinoOTA.setHostname(nodeId.c_str());
   if (settings.otaPass.length()) ArduinoOTA.setPassword(settings.otaPass.c_str());
   ArduinoOTA.onStart([] {
+    otaBusy = true;
     Serial.println("[ota] update starting");
     if (mqtt.connected()) {
       mqtt.publish(topicStatus.c_str(), "offline", true);
@@ -275,7 +318,11 @@ void setupOta() {
     led.setMode(StatusLed::Mode::Connecting);
   });
   ArduinoOTA.onProgress([](unsigned int, unsigned int) { led.update(); });
-  ArduinoOTA.onError([](ota_error_t e) { Serial.printf("[ota] error %u\n", e); });
+  ArduinoOTA.onError([](ota_error_t e) {
+    otaBusy = false;
+    batteryCycle.holdAwake(millis());
+    Serial.printf("[ota] error %u\n", e);
+  });
   ArduinoOTA.begin();  // also starts the mDNS responder: <id>.local
 }
 
@@ -291,14 +338,19 @@ void updateLedMode() {
 void setup() {
   Serial.begin(115200);
   const uint32_t t0 = millis();
-  while (!Serial && millis() - t0 < 1500) delay(10);  // give USB CDC a moment
+  const bool timerWake = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER;
+  while (!timerWake && !Serial && millis() - t0 < 1500) delay(10);
 
+  gpio_deep_sleep_hold_dis();
+  gpio_hold_dis((gpio_num_t)MURMUR_LED_PIN);
   led.begin();
   pinMode(MURMUR_BUTTON_PIN, INPUT_PULLUP);
   nodeId = makeNodeId();
   Serial.printf("\n[murmur] node %s  firmware %s\n", nodeId.c_str(), MURMUR_FW_VERSION);
 
   settings.load(nodeId);
+  batteryCycle.begin(millis(), settings.battery && !timerWake);
+  if (settings.battery && !timerWake) Serial.println("[battery] maintenance window: 5 minutes");
   led.setEnabled(settings.led);
   if (!settings.configured) {
     portal::run(settings, nodeId, led, 0, false);  // returns once saved
@@ -319,8 +371,12 @@ void setup() {
                   (unsigned long)kSensorRetry / 1000);
     sensorRetryAt = millis() + kSensorRetry;
   }
+  sensorReadAt = millis() + 2100;  // also allow DHT startup time on fast Wi-Fi joins
 
-  if (!connectWifi()) openPortalOrRestart();
+  if (!connectWifi()) {
+    if (settings.battery && !batteryCycle.maintenance(millis())) sleepNow(false);
+    openPortalOrRestart();
+  }
   Serial.printf("[wifi] connected  ip=%s  rssi=%d\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
 
   setupOta();
@@ -334,16 +390,23 @@ void loop() {
   handleButton();
   const uint32_t now = millis();
 
+  if (settings.battery && !otaBusy && !buttonDownAt && !rebootAt) {
+    if (!infoDirty && !reportNow && batteryCycle.readyToSleep(now)) sleepNow(true);
+    if (batteryCycle.expired(now)) sleepNow(false);
+  }
+
   if (WiFi.status() == WL_CONNECTED) {
     wifiLostAt = 0;
     ArduinoOTA.handle();
     if (!mqtt.connected() && due(mqttRetryAt)) mqttConnect();
     mqtt.loop();
+    if (!mqtt.connected()) batteryCycle.disconnected();
   } else {
+    batteryCycle.disconnected();
     if (!wifiLostAt) {
       wifiLostAt = now ? now : 1;
       Serial.println("[wifi] connection lost, reconnecting");
-    } else if (now - wifiLostAt > kWifiLostPortalAfter) {
+    } else if (!settings.battery && now - wifiLostAt > kWifiLostPortalAfter) {
       openPortalOrRestart();
       wifiLostAt = 0;
     }
@@ -354,16 +417,18 @@ void loop() {
       Serial.printf("[sensor] %s ready\n", sensorKey(sensor.resolved()));
       infoDirty = true;
       reportNow = true;
+      sensorReadAt = millis() + 2100;
     }
     sensorRetryAt = millis() + kSensorRetry;
   }
 
   if (mqtt.connected()) {
     if (infoDirty) publishInfo();
-    if (reportNow || now - lastReport >= settings.interval * 1000UL) {
+    if (due(sensorReadAt) && (!settings.battery || batteryCycle.configReady(millis())) &&
+        (reportNow || now - lastReport >= settings.interval * 1000UL)) {
       lastReport = now;
       reportNow = false;
-      publishState();
+      if (publishState()) batteryCycle.reported(millis());
     }
   }
 

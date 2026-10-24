@@ -30,6 +30,9 @@
 #ifndef MURMUR_INTERVAL
 #define MURMUR_INTERVAL 30
 #endif
+#ifndef MURMUR_BATTERY
+#define MURMUR_BATTERY false
+#endif
 
 static const char *kNs = "murmur";
 
@@ -72,6 +75,7 @@ void Settings::load(const String &nodeId) {
   pinScl = exists ? p.getUChar("pscl", 6) : 6;
   interval = exists ? p.getUInt("intv", MURMUR_INTERVAL) : MURMUR_INTERVAL;
   led = exists ? p.getBool("led", true) : true;
+  battery = exists ? p.getBool("battery", MURMUR_BATTERY) : MURMUR_BATTERY;
   lowTx = exists ? p.getBool("lowtx", false) : false;
   if (exists) p.end();
 
@@ -106,6 +110,7 @@ void Settings::save() {
   p.putUChar("pscl", pinScl);
   p.putUInt("intv", interval);
   p.putBool("led", led);
+  p.putBool("battery", battery);
   p.putBool("lowtx", lowTx);
   p.end();
 }

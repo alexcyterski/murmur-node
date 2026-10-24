@@ -51,15 +51,27 @@ Boards flashed with that build skip the setup page.
 
 | BOOT button | Action |
 |---|---|
-| Press | Send a reading now |
-| Hold 5 s | Factory reset |
+| Press while awake | Send a reading now; in battery mode, extend maintenance by 5 minutes |
+| Hold 5 s while awake | Factory reset |
 
-- **Wi-Fi outage:** if Wi-Fi is down for 3 minutes, the setup page reopens. The node keeps retrying in the background.
+- **Wi-Fi outage (always-on):** if Wi-Fi is down for 3 minutes, the setup page reopens. The node keeps retrying in the background.
 - **Weak antenna:** some SuperMini boards can't connect at full power, so the node retries at reduced TX power on its own.
 - **Updates over Wi-Fi:** `pio run -e ota -t upload --upload-port murmur-a1b2c3.local`
 
 Supported sensors: DHT22/AM2302, DHT11, AHT20(+BMP280), BMP280 and BME280. Nodes speak the
 [Murmur MQTT protocol](https://github.com/alexcyterski/murmur-core/blob/main/docs/protocol.md).
+
+## Battery mode
+
+Enable **Battery mode** in the setup portal or on the node's dashboard page (firmware 1.1.0+). Always-on remains the default. Enabling it chooses at least a 5-minute interval; disabling it restores 30 seconds. You can then adjust the interval yourself; **5–15 minutes** is a useful starting point for battery mode.
+
+- On a timer wake, the node connects, allows 1.5 seconds for retained configuration, publishes metadata and a reading, then announces `sleeping` and deep-sleeps for the report interval. Actual spacing includes wake/connect time. The status LED is held off during sleep; sensor modules remain powered.
+- Failed Wi-Fi joins return to sleep. Other unsuccessful wake cycles have an approximately 60-second budget, checked between blocking operations. Failure retries sleep for at least 5 minutes to avoid draining the battery during an outage.
+- Configuration changes, including turning battery mode off, apply at the next successful wake. Identify/read/reboot commands are not queued for sleeping nodes.
+- **Press RESET** (or power-cycle) for a 5-minute maintenance window for OTA and commands. Tapping BOOT while awake extends it; an OTA transfer is allowed to finish. The ESP32-C3 cannot wake from deep sleep using the SuperMini's BOOT pin (GPIO9).
+- If Wi-Fi fails during that explicit maintenance window, the setup portal opens. It sleeps after 5 minutes without a connected phone instead of continually rebooting. Routine timer wakes never open the portal.
+
+The dashboard treats sleeping nodes as healthy until reports become overdue. Readings remain best-effort MQTT telemetry without offline buffering. Battery life depends on the board's regulator, power LEDs and attached sensors; measure the assembled device's sleep current.
 
 ## Development checks
 

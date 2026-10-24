@@ -18,3 +18,4 @@
 // auto | dht22 | dht11 | aht20+bmp280 | aht20 | bmp280 | bme280
 #define MURMUR_SENSOR        "auto"
 #define MURMUR_INTERVAL      30                    // seconds between reports
+#define MURMUR_BATTERY       false                 // true: deep sleep; use interval 300–900

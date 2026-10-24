@@ -26,6 +26,7 @@ struct Settings {
   uint8_t pinScl = 6;
   uint32_t interval = 30;
   bool led = true;
+  bool battery = false;    // deep sleep between reports
   bool lowTx = false;      // reduced Wi-Fi TX power, fixes some SuperMini boards
   bool configured = false;
 

@@ -21,6 +21,7 @@ class StatusLed {
   void setEnabled(bool en) { enabled_ = en; }
   void blip() { if (enabled_) blipUntil_ = millis() + 35; }
   void identify(uint32_t ms) { identifyUntil_ = millis() + ms; }
+  void off() { mode_ = Mode::Off; blipUntil_ = identifyUntil_ = 0; write(false); }
 
   void update() {
     const uint32_t now = millis();

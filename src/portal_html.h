@@ -48,6 +48,8 @@ static const char kPortalForm[] PROGMEM = R"HTML(
 <input id="name" name="name" maxlength="48" value="{{NAME}}" placeholder="Living Room">
 <label for="interval">Report every (seconds)</label>
 <input id="interval" name="interval" type="number" min="2" max="3600" value="{{INTERVAL}}">
+<label class="chk"><input id="battery" type="checkbox" name="battery" value="1" {{BATTERY}}>Battery mode</label>
+<div class="hint">Deep sleep between reports; 5–15 minutes recommended. RESET opens a 5-minute window for commands and OTA.</div>
 </div>
 <div class="card"><h2>Wi-Fi</h2>
 <label for="ssid">Network</label>
@@ -75,6 +77,7 @@ static const char kPortalForm[] PROGMEM = R"HTML(
 <button type="submit">Save and connect</button>
 </form>
 <script>
+document.getElementById('battery').addEventListener('change',e=>{const i=document.getElementById('interval');i.value=e.target.checked?Math.max(+i.value||30,300):30});
 fetch('/scan').then(r=>r.json()).then(l=>{const d=document.getElementById('nets');l.forEach(n=>{if(![...d.options].some(o=>o.value===n)){const o=document.createElement('option');o.value=n;d.appendChild(o)}})}).catch(()=>{});
 </script>)HTML";
 
@@ -82,6 +85,6 @@ static const char kPortalSaved[] PROGMEM = R"HTML(
 <div class="ok"><div class="dot"></div><div class="eb">Saved</div>
 <h1>Connecting…</h1>
 <p class="sub">The node is restarting and joining <b>{{SSID}}</b>.<br>It will appear on your Murmur dashboard within a minute.<br><br>
-If it doesn't, the <span class="id">Murmur-{{SHORT}}</span> network will come back so you can fix the settings.</p></div>)HTML";
+If it doesn't, press RESET to reopen the maintenance window. If Wi-Fi cannot connect during that window, the <span class="id">Murmur-{{SHORT}}</span> setup network will return.</p></div>)HTML";
 
 static const char kPortalTail[] PROGMEM = "</main></body></html>";

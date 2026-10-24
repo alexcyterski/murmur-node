@@ -81,6 +81,7 @@ void handleRoot() {
   body.replace("{{SENSORS}}", sensors);
   body.replace("{{NAME}}", htmlEscape(cfg->name));
   body.replace("{{INTERVAL}}", String(cfg->interval));
+  body.replace("{{BATTERY}}", cfg->battery ? "checked" : "");
   body.replace("{{SSID}}", htmlEscape(cfg->ssid));
   String options;
   for (const String &ssid : ssids) options += "<option value=\"" + htmlEscape(ssid) + "\">";
@@ -134,6 +135,7 @@ void handleSave() {
   next.name = next.name.substring(0, murmur::namePrefixBytes(next.name.c_str()));
   if (next.name.isEmpty()) next.name = id;
   next.interval = constrain(server->arg("interval").toInt(), (long)kIntervalMin, (long)kIntervalMax);
+  next.battery = server->hasArg("battery");
   next.ssid = server->arg("ssid");
   next.ssid.trim();
   if (server->arg("pass").length()) next.pass = server->arg("pass");
