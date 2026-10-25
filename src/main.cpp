@@ -81,6 +81,7 @@ void sleepNow(bool delivered) {
     mqtt.publish(topicStatus.c_str(), delivered ? "sleeping" : "offline", true);
     delay(100);  // allow the final status packet onto the wire before disconnect
     mqtt.disconnect();  // graceful disconnect suppresses the offline last will
+    delay(150);  // let DISCONNECT leave the radio before Wi-Fi goes off, or the broker fires the will
   }
   WiFi.mode(WIFI_OFF);
   led.off();
