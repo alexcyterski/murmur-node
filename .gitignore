@@ -7,3 +7,4 @@
 .vscode/ipch
 compile_commands.json
 extensions.json
+include/murmur_secrets.h
